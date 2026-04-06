@@ -1,0 +1,79 @@
+---
+title: "COVID"
+output: html_document
+date: "2026-04-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(openxlsx)
+library(fpp3)
+```
+
+
+```{r}
+# make folder all in rds for saving data frame
+
+dir.create("../rds/covid",
+             showWarnings = TRUE, recursive = FALSE, mode = "0777")
+```
+
+
+```{r}
+list.files("../xlsx/covid")
+```
+
+```{r}
+csv_covid <- list.files("../xlsx/covid")
+
+csv_covid
+```
+
+```{r}
+file_covid <- c("death", "daily", "inpt", "severe")
+```
+
+
+```{r}
+from_covid <- paste0("../xlsx/covid/", csv_covid)
+
+from_covid
+```
+
+```{r}
+list_covid <- map(from_covid, function(x){ 
+  read_csv(x) %>%
+    mutate(YMD = str_replace_all(Date, "/", "-")) %>%
+    mutate(YMD = as_date(YMD)) %>%
+    mutate(YM = yearmonth(YMD)) %>% return()
+})
+```
+
+```{r}
+to_covid <- paste0("../rds/covid/df_", file_covid)
+
+to_covid
+```
+
+
+
+```{r}
+for (i in 1:length(list_covid)){
+  saveRDS(list_covid[[i]], to_covid[i] ) 
+}
+```
+
+
+# end
+
+```{r}
+for (i in 1:length(list_covid)){
+  assign(paste0("df_", file_covid[i]), list_covid[[i]] )
+}
+```
+
