@@ -1,0 +1,1051 @@
+---
+title: "Liver cancer"
+output: html_document
+date: "2026-02-02"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(openxlsx)
+
+library(fpp3)
+library(rkt)
+
+library(ggtext)
+
+library(ComplexHeatmap)
+library(ggh4x)
+
+library(cowplot)
+library(patchwork)
+library(scales)
+
+
+library(mapdata)
+library(sf)
+library(rnaturalearth)
+```
+
+
+```{r}
+# make df folder
+
+dir.create("../figure", showWarnings = TRUE, recursive = FALSE, mode = "0777")
+```
+
+```{r}
+df_surg_prf <- readRDS("../df/prf/df_surg_prf_reg")
+```
+
+```{r}
+df_pop <- readRDS("../rds/pop/prf/df_pop_prf")
+```
+
+```{r}
+df_comb_prf_rkt <- readRDS("../df/rkt/df_comb_prf_rkt.RDS")
+```
+
+
+```{r}
+name_plot <- list.files("../plot/prf") %>% str_remove("\\.RDS")
+```
+
+```{r}
+path_plot <- paste0("../plot/prf/", name_plot, ".RDS")
+```
+
+```{r}
+for (i in 1:length(name_plot)){
+  assign(name_plot[i], readRDS(path_plot[i]))
+}
+```
+
+```{r}
+df_surg_prf <- df_surg_prf %>%
+  rename(YEAR = "YEAR_str") %>%
+  mutate(VALUE = replace_na(VALUE, 0))
+```
+
+
+```{r}
+df_pop <- df_pop %>%
+  rename(PRF = "PRF_en") %>%
+  mutate(ID = paste0(YEAR, "_", PRF))
+```
+
+```{r}
+df_surg_prf %>%
+   filter(str_detect(ORGAN, "腹部") & 
+                    str_detect(PRO_name, "肝切除術")) %>%
+  count(CLASS_code)
+```
+
+
+```{r}
+df_hptc_prf <- df_surg_prf %>%
+   filter(str_detect(CLASS_code, "^K695")) %>%
+  mutate(LOC = case_when(str_detect(PRO_name, "部分切除")  ~  "Partial", 
+                         str_detect(PRO_name, "亜区域切除")  ~  "Sub_seg",
+                         str_detect(PRO_name, "外側区域|１区域切除")  ~  "One_seg",
+                         str_detect(PRO_name, "２区域切除|３区域切除")  ~  "Two_seg_",
+                        .default = NA
+                        )) %>%
+  
+  mutate(TX = case_when(str_detect(PRO_name, "腹腔鏡") & str_detect(PRO_name, "手術用支援機器") ~  "Lap (RA)",
+                        str_detect(PRO_name, "腹腔鏡") & !str_detect(PRO_name, "手術用支援機器") ~ "Lap",
+                        .default = "Open"
+                        ))
+```
+
+
+```{r}
+df_hptc_prf_n  <- df_hptc_prf   %>%
+  group_by(YEAR, PRF, iso_3166_2, REG) %>%
+  summarise(SUM = sum(VALUE)) %>%
+  mutate(TX = "Resection") %>%
+  ungroup()
+
+df_hptc_prf_n
+```
+
+```{r}
+df_abl_prf <- df_surg_prf %>% 
+  filter( (str_detect(PRO_name, "肝悪性腫瘍ラジオ波焼灼療法") |
+             str_detect(PRO_name, "肝悪性腫瘍マイクロ波凝固法"))) %>%
+      mutate(TX = case_when(str_detect(PRO_name, "ラジオ") & str_detect(PRO_name, "腹腔鏡") ~ "RFA (Lap)",
+                            str_detect(PRO_name, "ラジオ") & !str_detect(PRO_name, "腹腔鏡") ~ "RFA",
+                            str_detect(PRO_name, "マイクロ") & str_detect(PRO_name, "腹腔鏡") ~ "MWA (Lap)",
+                            str_detect(PRO_name, "マイクロ") & !str_detect(PRO_name, "腹腔鏡") ~ "MWA")) 
+```
+
+```{r}
+df_abl_prf_n <- df_abl_prf %>%
+  group_by(PRF, YEAR, REG, iso_3166_2) %>%
+  summarise(SUM = sum(VALUE)) %>%
+  mutate(TX = "Ablation")
+```
+
+```{r}
+df_tace_prf <- df_surg_prf %>% 
+  filter((str_detect(PRO_name, "化学塞栓") )) 
+```
+
+```{r}
+df_tace_prf_n <- df_tace_prf %>%
+  group_by(PRF, YEAR, REG, iso_3166_2) %>%
+  summarise(SUM = sum(VALUE)) %>%
+  mutate(TX = "TACE")
+```
+
+```{r}
+df_comb_prf <- df_hptc_prf_n %>%
+  bind_rows(df_abl_prf_n) %>%
+  bind_rows(df_tace_prf_n) %>%
+  mutate(TX = factor(TX, levels = c("Resection",
+                                    "Ablation",
+                                    "TACE")))
+```
+
+
+
+
+```{r}
+df_comb_prf  <- df_comb_prf  %>%
+  mutate(ID = paste0(YEAR, "_", iso_3166_2)) %>%
+  left_join(df_pop %>%
+              mutate(ID = paste0(YEAR, "_", iso_3166_2)) %>%
+              rename(POP = "ALL_total") %>%
+              select(ID, POP),
+            by = join_by(ID)) 
+
+```
+
+
+```{r}
+df_comb_prf  <- df_comb_prf  %>%
+  mutate(ADJ = SUM/(POP*1000)*10^5 )
+```
+
+# time series n 
+
+```{r}
+df_comb_prf %>% group_by(PRF) %>%
+  slice_max(SUM, n = 1) %>%
+  arrange(desc(SUM))
+```
+
+```{r}
+df_sum_scales <- df_comb_prf %>%
+  group_by(PRF) %>%
+  slice_max(SUM, n = 1) %>%
+  distinct(PRF, .keep_all = TRUE) %>%
+  mutate(ymax = case_when(SUM <400 ~ 400,
+                         SUM >= 400 & SUM < 500 ~ 500,
+                         SUM >= 500 & SUM < 600 ~ 600,
+                         SUM >= 600 & SUM < 800 ~ 800,
+                         SUM >= 800 & SUM < 1000 ~ 1000,
+                         SUM >= 1000 & SUM < 1500 ~ 1500,
+                         SUM >= 1500 & SUM < 2000 ~ 2000,
+                         SUM >= 2000 & SUM < 3000 ~ 3000,
+                         SUM >= 3000 & SUM < 4000 ~ 4000,
+                         SUM >= 4000 & SUM < 5000 ~ 5000,
+                         .default = NA
+                         )) %>%
+  ungroup()
+```
+
+```{r}
+nrow(df_sum_scales)
+```
+
+
+```{r}
+df_sum_scales <- df_sum_scales %>%
+  mutate(n = case_when(ymax %in% c(500, 1000, 5000) ~ 5,
+                       ymax %in% c(600, 1500, 3000) ~ 3,
+                       ymax %in% c(400, 800, 2000, 4000) ~ 4,
+                       .default = NA)) %>%
+  mutate(ymin = rep(0, 47))
+```
+
+```{r}
+df_sum_scales <- df_sum_scales %>% 
+  mutate(range = ymax/n)
+```
+
+
+```{r}
+df_sum_scales %>% count(ymax, n)
+```
+
+
+
+```{r}
+df_sum_scales_split <- split(df_sum_scales, df_sum_scales$PRF)
+```
+
+
+```{r}
+sum_scales <- lapply(df_sum_scales_split, function(x) {
+  scale_y_continuous(limits = c(0, x$ymax),
+                     breaks = base::seq(0, x$ymax, x$range),
+                     labels = label_comma())
+})
+```
+
+```{r}
+s1 <- df_comb_prf %>%
+  filter( !(YEAR == "2015" & TX == "Resection")) %>%
+    mutate(YEAR = as.numeric(YEAR)) %>%
+  ggplot(aes(YEAR, SUM, group = TX, colour = TX))+
+  geom_line(linewidth = 0.3)+
+#  geom_point(size = 1)+
+  scale_colour_manual(values = c("#ff7f0e",
+                                 "#2ca02c",
+                                 "#9467bd"),
+                      name = "Treatment")+
+  ggh4x::facet_wrap2(vars(PRF), nrow = 8, ncol = 6,
+                     axes = "all",
+                     remove_labels = "all",
+                     scales= "free_y")+
+  ggh4x::facetted_pos_scales(y = sum_scales)+
+  scale_x_continuous(limits = c(2014, 2023),
+                     breaks = seq(2014, 2022, 2))+
+  guides(color = guide_legend(override.aes = list(linewidth = 0.5) ) )+
+  labs(x = "Year",
+       y = "n")+
+  theme_classic()+
+  theme(strip.background = element_blank(),
+        strip.text = element_text(size = 8, colour = "black", face = "bold"),
+        axis.title = element_text(size = 8, colour = "black", face = "bold"),
+        axis.text.x = element_text(size = 8, colour = "black",
+                                   angle = 90, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(size = 8, colour = "black"),
+        axis.line = element_line(linewidth = 0.3, colour = "black"),
+        axis.ticks = element_line(linewidth = 0.3, colour = "black"),
+        legend.title = element_text(size = 8, colour = "black", face = "bold"),
+        legend.text = element_text(size = 8, colour = "black"),
+       # legend.position = "inside",
+      #  legend.position.inside = c(1, 0),
+      #  legend.justification.inside = c(1, 0),
+        legend.margin = margin(0, 0, 0, 0, unit = "mm"),
+        plot.margin = margin(0, 0, 0, 0, unit = "mm"),
+        legend.key.spacing.y = unit(0, "mm"),
+        legend.key.height = unit(1, "line"),
+        legend.box.margin = margin(0, 0, 0, 0, unit = "mm"),
+        panel.spacing.x = unit(0, "mm"),
+        panel.spacing.y = unit(1, "mm"))
+
+s1
+```
+
+
+```{r}
+s1_leg <- s1 %>% get_legend() %>% wrap_elements()
+
+p1_leg
+```
+
+```{r}
+s1_no_leg <- s1 + theme(legend.position = "none")
+
+s1_new <- s1_no_leg + inset_element(s1_leg,
+                                    left = 0.875,
+                                    right = 1,
+                                    bottom = 0,
+                                    top = 1/8,
+                                    align_to = "full")
+
+s1_new
+```
+
+
+```{r}
+ggsave("../figure/FigS1.svg", 
+       s1_new,
+       width = 175, height = 235, unit = "mm")
+```
+
+
+```{r}
+s2 <- df_comb_prf %>%
+  filter( !(YEAR == "2015" & TX == "Resection")) %>%
+    mutate(YEAR = as.numeric(YEAR)) %>%
+  ggplot(aes(YEAR, SUM, group = TX, colour = TX))+
+  geom_line(linewidth = 0.3)+
+#  geom_point(size = 1)+
+  scale_colour_manual(values = c("#ff7f0e",
+                                 "#2ca02c",
+                                 "#9467bd"),
+                      name = "Treatment")+
+  ggh4x::facet_wrap2(vars(PRF), nrow = 8, ncol = 6,
+                     axes = "all",
+                     remove_labels = "all")+
+  scale_x_continuous(limits = c(2014, 2023),
+                     breaks = seq(2014, 2022, 2))+
+  scale_y_continuous(limits = c(0, 5000),
+                     breaks = seq(0, 5000, 1000),
+                     labels = scales::label_comma())+
+        guides(colour = guide_legend(override.aes = list(linewidth = 0.5)))+
+  labs(x = "Year",
+       y = "n")+
+  theme_classic()+
+  theme(strip.background = element_blank(),
+        strip.text = element_text(size = 8, colour = "black", face = "bold"),
+        axis.title = element_text(size = 8, colour = "black", face = "bold"),
+        axis.text.x = element_text(size = 8, colour = "black",
+                                   angle = 90, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(size = 8, colour = "black"),
+        axis.line = element_line(linewidth = 0.3, colour = "black"),
+        axis.ticks = element_line(linewidth = 0.3, colour = "black"),
+        legend.title = element_text(size = 8, colour = "black", face = "bold"),
+        legend.text = element_text(size = 8, colour = "black"),
+       # legend.position = "inside",
+      #  legend.position.inside = c(1, 0),
+      #  legend.justification.inside = c(1, 0),
+        legend.margin = margin(0, 0, 0, 0, unit = "mm"),
+        plot.margin = margin(0, 0, 0, 0, unit = "mm"),
+        legend.key.spacing.y = unit(0, "mm"),
+        legend.key.height = unit(1, "line"),
+        legend.box.margin = margin(0, 0, 0, 0, unit = "mm"),
+        panel.spacing.x = unit(2, "mm"),
+        panel.spacing.y = unit(1, "mm"))
+```
+
+```{r}
+s2_leg <- s2 %>% get_legend()
+
+
+s2_no_leg <- s2 + theme(legend.position = "none")
+
+s2_new <- s2_no_leg + inset_element(s2_leg,
+                                    left = 0.875,
+                                    right = 1,
+                                    bottom = 0,
+                                    top = 1/8,
+                                    align_to = "full")
+
+s2_new
+```
+
+
+```{r}
+ggsave("../figure/FigS2.svg", 
+       s2_new,
+       width = 175, height = 235, unit = "mm")
+```
+
+
+# ADJ
+
+```{r}
+df_comb_prf %>% group_by(PRF) %>%
+  slice_max(ADJ, n = 1) %>%
+  arrange(desc(SUM))
+```
+
+```{r}
+df_ADJ_scales <- df_comb_prf %>%
+  group_by(PRF) %>%
+  slice_max(ADJ, n = 1) %>%
+  distinct(PRF, .keep_all = TRUE) %>%
+  mutate(ymax = case_when(ADJ <20 ~ 20,
+                         ADJ >= 20 & ADJ < 30 ~ 30,
+                         ADJ >= 30 & ADJ < 40 ~ 40,
+                         ADJ >= 40 & ADJ < 50 ~ 50,
+                         ADJ >= 50 & ADJ < 60 ~ 60,
+                         ADJ >= 60 & ADJ < 80 ~ 80,
+                         .default = NA
+                         )) %>%
+  ungroup()
+```
+
+```{r}
+nrow(df_ADJ_scales)
+```
+
+```{r}
+df_ADJ_scales %>% count(ymax)
+```
+
+
+```{r}
+df_ADJ_scales <- df_ADJ_scales %>%
+  mutate(n = case_when(ymax %in% c(50) ~ 5,
+                       ymax %in% c(30, 60) ~ 3,
+                       ymax %in% c(20, 40, 80) ~ 4,
+                       .default = NA)) %>%
+  mutate(ymin = rep(0, 47))
+```
+
+```{r}
+df_ADJ_scales <- df_ADJ_scales %>% 
+  mutate(range = ymax/n)
+```
+
+
+```{r}
+df_ADJ_scales %>% count(ymax, n)
+```
+
+```{r}
+df_ADJ_scales_split <- split(df_ADJ_scales, df_ADJ_scales$PRF)
+```
+
+
+```{r}
+ADJ_scales <- lapply(df_ADJ_scales_split, function(x) {
+  scale_y_continuous(limits = c(0, x$ymax),
+                     breaks = base::seq(0, x$ymax, x$range),
+                     labels = label_comma())
+})
+```
+
+# unscaled
+
+```{r}
+s3 <- df_comb_prf %>%
+  filter( !(YEAR == "2015" & TX == "Resection")) %>%
+    mutate(YEAR = as.numeric(YEAR)) %>%
+  ggplot(aes(YEAR, ADJ, group = TX, colour = TX))+
+  geom_line(linewidth = 0.3)+
+#  geom_point(size = 1)+
+  scale_colour_manual(values = c("#ff7f0e",
+                                 "#2ca02c",
+                                 "#9467bd"),
+                      name = "Treatment")+
+  ggh4x::facet_wrap2(vars(PRF), nrow = 8, ncol = 6,
+                     axes = "all",
+                     remove_labels = "all")+
+  scale_x_continuous(limits = c(2014, 2023),
+                     breaks = seq(2014, 2022, 2))+
+  scale_y_continuous(limits = c(0, 80),
+                     breaks = seq(0, 80, 20)) +
+      guides(colour = guide_legend(override.aes = list(linewidth = 0.5)))+
+  labs(x = "Year",
+       y = "**n/10<sup>5</sup> people**")+
+  theme_classic()+
+   theme(strip.background = element_blank(),
+        strip.text = element_text(size = 8, colour = "black", face = "bold"),
+        axis.title.x = element_text(size = 8, colour = "black", face = "bold"),
+        axis.title.y = element_markdown(size = 8, colour = "black"),
+        axis.text.x = element_text(size = 8, colour = "black",
+                                   angle = 90, hjust = 1, vjust = 0.5),
+        axis.text.y = element_markdown(size = 8, colour = "black"),
+        axis.line = element_line(linewidth = 0.3, colour = "black"),
+        axis.ticks = element_line(linewidth = 0.3, colour = "black"),
+        legend.title = element_text(size = 8, colour = "black", face = "bold"),
+        legend.text = element_text(size = 8, colour = "black"),
+       # legend.position = "inside",
+      #  legend.position.inside = c(1, 0),
+      #  legend.justification.inside = c(1, 0),
+        legend.margin = margin(0, 0, 0, 0, unit = "mm"),
+        plot.margin = margin(0, 0, 0, 0, unit = "mm"),
+        legend.key.spacing.y = unit(0, "mm"),
+        legend.key.height = unit(1, "line"),
+        legend.box.margin = margin(0, 0, 0, 0, unit = "mm"),
+        panel.spacing.x = unit(2, "mm"),
+        panel.spacing.y = unit(1, "mm"))
+
+s3
+```
+
+```{r}
+s3_leg <- s3 %>% get_legend()
+
+
+s3_no_leg <- s3 + theme(legend.position = "none")
+
+s3_new <- s3_no_leg + inset_element(s3_leg,
+                                    left = 0.875,
+                                    right = 1,
+                                    bottom = 0,
+                                    top = 1/8,
+                                    align_to = "full")
+
+s2_new
+```
+
+```{r}
+ggsave("../figure/FigS3.svg", 
+       s3_new,
+       width = 175, height = 235, unit = "mm")
+```
+
+```{r}
+s4 <- df_comb_prf %>%
+  filter( !(YEAR == "2015" & TX == "Resection")) %>%
+    mutate(YEAR = as.numeric(YEAR)) %>%
+  ggplot(aes(YEAR, ADJ, group = TX, colour = TX))+
+  geom_line(linewidth = 0.3)+
+#  geom_point(size = 1)+
+  scale_colour_manual(values = c("#ff7f0e",
+                                 "#2ca02c",
+                                 "#9467bd"),
+                      name = "Treatment")+
+  ggh4x::facet_wrap2(vars(PRF), nrow = 8, ncol = 6,
+                     axes = "all",
+                     remove_labels = "all",
+                     scales= "free_y")+
+  ggh4x::facetted_pos_scales(y = ADJ_scales)+
+  scale_x_continuous(limits = c(2014, 2023),
+                     breaks = seq(2014, 2022, 2))+
+  labs(x = "Year",
+       y = "**n/10<sup>5</sup> people**")+
+  theme_classic()+
+  theme(strip.background = element_blank(),
+        strip.text = element_text(size = 8, colour = "black", face = "bold"),
+        axis.title.x = element_text(size = 8, colour = "black", face = "bold"),
+        axis.title.y = element_markdown(size = 8, colour = "black"),
+        axis.text.x = element_text(size = 8, colour = "black",
+                                   angle = 90, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(size = 8, colour = "black"),
+        axis.line = element_line(linewidth = 0.3, colour = "black"),
+        axis.ticks = element_line(linewidth = 0.3, colour = "black"),
+        legend.title = element_text(size = 8, colour = "black", face = "bold"),
+        legend.text = element_text(size = 8, colour = "black"),
+       # legend.position = "inside",
+      #  legend.position.inside = c(1, 0),
+      #  legend.justification.inside = c(1, 0),
+        legend.margin = margin(0, 0, 0, 0, unit = "mm"),
+        plot.margin = margin(0, 0, 0, 0, unit = "mm"),
+        legend.key.spacing.y = unit(0, "mm"),
+        legend.key.height = unit(1, "line"),
+        legend.box.margin = margin(0, 0, 0, 0, unit = "mm"),
+        panel.spacing.x = unit(0, "mm"),
+        panel.spacing.y = unit(1, "mm"))
+
+s4
+```
+
+```{r}
+s4_leg <- s4 %>% get_legend()
+
+s4_no_leg <- s4 + theme(legend.position = "none")
+
+s4_new <- s4_no_leg + inset_element(s4_leg,
+                                    left = 0.875,
+                                    right = 1,
+                                    bottom = 0,
+                                    top = 1/8,
+                                    align_to = "full")
+
+s4_new
+```
+
+```{r}
+ ggsave("../figure/FigS4.svg", 
+       s3_new,
+       width = 175, height = 235, unit = "mm")
+```
+
+```{r}
+df_comb_prf 
+```
+
+
+# pick top 7
+
+```{r}
+prf_filter <- df_comb_prf %>%
+  filter(YEAR == "2023") %>%
+  group_by(PRF) %>%
+  summarise(SUM = sum(SUM)) %>%
+  arrange(desc(SUM)) %>%
+  pull(PRF) %>%
+  as.character()
+
+prf_filter
+```
+
+
+```{r}
+df_comb_prf %>% 
+  filter( PRF %in% prf_filter[1:7]) %>%
+  group_by(PRF) %>%
+  slice_max(SUM, n = 1) %>%
+  arrange(PRF)
+```
+```{r}
+df_comb_prf %>% 
+  filter( PRF %in% prf_filter[1:7]) %>%
+  group_by(PRF) %>%
+  slice_max(ADJ, n = 1) %>%
+  arrange(PRF)
+```
+
+
+```{r}
+sum_scales_7 <- list(
+  PRF == "Hokkaido" ~ scale_y_continuous(limits = c(0, 1800),
+                                         breaks = seq(0, 1800, 600),
+                                         labels = label_comma()),
+  
+  PRF == "Tokyo" ~ scale_y_continuous(limits = c(0, 4000),
+                                         breaks = seq(0, 4000, 1000),
+                                         labels = label_comma()),
+  
+  PRF == "Kanagawa" ~ scale_y_continuous(limits = c(0, 2700),
+                                         breaks = seq(0, 2700, 900),
+                                         labels = label_comma()),
+  
+  PRF == "Aichi" ~ scale_y_continuous(limits = c(0, 3000),
+                                         breaks = seq(0, 3000,1000),
+                                         labels = label_comma()),
+  
+  PRF == "Osaka" ~ scale_y_continuous(limits = c(0, 5000),
+                                         breaks = seq(0, 5000, 1000),
+                                         labels = label_comma()),
+  
+  PRF == "Aichi" ~ scale_y_continuous(limits = c(0, 3000),
+                                         breaks = seq(0, 3000, 1000),
+                                         labels = label_comma()),
+  
+  PRF == "Osaka" ~ scale_y_continuous(limits = c(0, 3200),
+                                         breaks = seq(0, 3200, 800),
+                                         labels = label_comma())
+  
+) 
+```
+
+
+```{r}
+y_scales_7 <- list(
+  CAT == "SUM" ~ scale_y_continuous(limits = c(0, 5000),
+                                         breaks = seq(0, 5000, 1000),
+                                         labels = label_comma()),
+  
+  CAT == "ADJ" ~ scale_y_continuous(limits = c(0, 61),
+                                         breaks = seq(0, 60, 15),
+                                         labels = label_comma())
+) 
+```
+
+```{r}
+convert_label <- function(x){
+  if (x %in% c("SUM")){
+    return("**n**")
+  }
+  
+  else if (x %in% c("ADJ")){
+    return("**n/10<sup>5</sup> people**")
+  }
+  
+  else {
+    return(NA)
+  }
+}
+
+convert_label <- Vectorize(convert_label)
+```
+
+```{r}
+df_comb_prf_long <- df_comb_prf  %>%
+  pivot_longer(cols = c(SUM, ADJ),
+               names_to = "CAT",
+               values_to = "VALUE") %>%
+  mutate(CAT = factor(CAT,
+                      levels = c("SUM", "ADJ"))) 
+```
+
+
+```{r}
+p1_c <- df_comb_prf_long %>%
+  filter(PRF %in% prf_filter[1:7]) %>%
+  mutate(YEAR = as.numeric(YEAR)) %>%
+  filter(!(YEAR == "2015" & TX == "Resection")) %>%
+  mutate(YEAR = as.numeric(YEAR)) %>%
+  ggplot(aes(YEAR, VALUE, colour = TX, group = TX)) +
+  geom_line(linewidth = 0.3)+
+  facet_grid2(rows= vars(CAT),
+              cols = vars(PRF),
+              scales = "free_y",
+              remove_labels = "all",
+              axes = "all",
+              switch = "y",
+              labeller = labeller(CAT = convert_label))+
+  ggh4x::facetted_pos_scales(y = y_scales_7)+
+  scale_y_continuous(limits = c(0, 2500),
+                     breaks = seq(0, 2500, 500),
+                     labels = scales::label_comma())+
+  scale_x_continuous(limits = c(2014, 2023),
+                     breaks = seq(2014, 2019, 5))+
+  
+  scale_colour_manual(values = c("#ff7f0e",
+                                 "#2ca02c",
+                                 "#9467bd"),
+                      name = "Treatment")+
+  guides(color = guide_legend(override.aes = list(linewidth = 0.5) ) )+
+  theme_classic()+
+  labs(tag = "B",
+       x = "Year",
+       y = "")+
+  theme(plot.tag = element_text(size =12, colour = "black", face = "bold"),,
+       strip.background = element_blank(),
+        strip.text.x = element_text(size = 8, colour = "black", face = "bold"),
+        strip.placement = "outside",
+        strip.text.y.left = element_markdown(size = 8, colour = "black", face = "bold",
+                                             margin = margin(1, 0, 1, 0, "mm")),
+        axis.title.x = element_text(size = 8, colour = "black", face = "bold",
+                                    margin = margin(0, 0, 0, 0, "mm")),
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(size = 8, colour = "black"),
+        axis.text.y = element_text(size = 8, colour = "black"),
+        axis.line = element_line(linewidth = 0.3, colour = "black"),
+        axis.ticks = element_line(linewidth = 0.3, colour = "black"),
+        legend.title = element_text(size = 8, colour = "black", face = "bold"),
+        legend.text = element_text(size = 8, colour = "black"),
+       legend.background = element_blank(),
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+       
+      #  legend.position.inside = c(0.01, 1),
+      #  legend.justification.inside = c(0, 1), 
+    #    legend.key.spacing.y = unit(0, "mm"),
+        legend.box.spacing = unit(0, "mm"),
+    #    legend.key.height = unit(1, "line"),
+        legend.margin = margin(0, 0, 0, 0, "mm"),
+        plot.margin = margin(0, 0, 0, 0, "mm"),
+        panel.spacing = unit(2, "mm"))
+
+p1_c
+```
+
+
+
+```{r}
+df_comb_prf_long <- df_comb_prf_long %>%
+  mutate(ID = paste0(PRF, "_", TX, "_", CAT))
+```
+
+# add 
+```{r}
+df_comb_prf_long_na <- df_comb_prf_long %>%
+    mutate(VALUE = case_when(YEAR == "2015" & TX == "Resection" ~ NA,
+                             .default = VALUE) )
+```
+
+
+
+```{r}
+# man kendall test on raw values
+
+
+df_comb_prf_tx_rkt <- df_comb_prf_long_na    %>%
+  
+  
+  mutate(YEAR = as.numeric(YEAR)) %>%
+  ungroup() %>%
+  nest(data = -ID) %>%
+  mutate(
+    model = purrr::map(data, ~ rkt(date = .x$YEAR,
+                                 y = .x$VALUE)),
+    tau = map_dbl(model, "tau"),
+    p_value = map_dbl(model, "sl"),
+    slope = map_dbl(model, "B")
+  )
+
+df_comb_prf_tx_rkt
+
+```
+
+```{r}
+levels_prf <- df_surg_prf %>% distinct(PRF) %>% arrange(PRF) %>% pull(PRF) %>%
+  as.character()
+```
+
+```{r}
+df_comb_prf_res <- df_comb_prf_rkt %>%
+  separate_wider_delim(cols = ID,
+                       delim = "_",
+                       names = c("TX", "CAT")) %>%
+  mutate(PRF = "Overall") %>%
+  relocate(PRF, .before = TX)
+```
+
+```{r}
+df_comb_prf_res
+```
+
+
+```{r}
+# split ID
+
+df_comb_prf_tx_res <- df_comb_prf_tx_rkt %>%
+  separate_wider_delim(cols = ID,
+                       delim = "_",
+                       names = c("PRF", "TX", "CAT"))
+
+```
+
+```{r}
+df_comb_prf_res <- df_comb_prf_res %>%
+  bind_rows(df_comb_prf_tx_res)
+```
+
+```{r}
+df_comb_prf_res <- df_comb_prf_res %>%
+  mutate(p_value = case_when(!is.na(p_value_cor) ~ p_value_cor,
+                             .default = p_value))
+```
+
+
+```{r}
+df_comb_prf_res <- df_comb_prf_res %>%
+  mutate(PRF = factor(PRF, levels = c("Overall" , levels_prf))) %>%
+  mutate(CAT = factor(CAT, levels = c("SUM", "ADJ"))) %>%
+  mutate(TX = factor(TX, levels = c("Resection", "Ablation", "TACE")))
+
+```
+
+```{r}
+df_comb_prf_res
+```
+
+
+```{r}
+df_comb_prf_res %>%
+  filter(PRF %in% prf_filter[1:6])
+```
+
+
+```{r}
+get_exp <- function(x){
+
+  if (x > 0.001){
+    
+    return("")
+  }
+  
+  else {
+  
+    p <- formatC(x, digits = 1, format = "e", flag = "#")
+    
+    ex <- p %>% str_extract("(?<=e).+") %>% str_remove_all("(?<=\\-)0+")
+    
+    return(ex)
+  }
+}
+
+get_expv <- Vectorize(get_exp)
+```
+
+```{r}
+get_num <- function(x){
+
+    if (x > 0.001){
+    
+      p <- formatC(x, digits = 2, format = "fg", flag = "#")
+      
+      return(p)
+  }
+  
+  else {
+  
+    p <- formatC(x, digits = 1, format = "e", flag = "#")
+    
+    num <- p %>% str_extract(".+(?=e)")
+    
+    num <- str_c(num, "×10")
+      
+    return(num)
+  }
+}
+
+get_numv <- Vectorize(get_num)
+```
+
+```{r}
+df_comb_prf_res <- df_comb_prf_res %>%
+ mutate(slope_label = case_when(abs(slope) < 10 ~ formatC(slope, digits = 2, format = "fg", flag= "#"),
+                                 .default = round(slope) %>% as.character())) %>%
+  mutate(slope_label = str_replace(slope_label, "\\.$", "\\.0$")) %>%
+  
+  mutate(tau_label = formatC(tau, digits = 2, format = "fg", flag = "#")) %>%
+  
+  mutate(tau_label = str_replace_all(tau_label, "-", "−")) %>%
+  
+  mutate(slope_label = str_replace_all(slope_label, "-", "−")) %>%
+  
+  mutate(p_symbol = case_when(p_value < 0.001 ~ "***",
+                              p_value < 0.01 ~ "**",
+                              p_value < 0.05 ~ "*",
+                              .default = "")) %>%
+  
+  mutate(label_slope = paste0("beta == '", slope_label, "'" )) %>%
+  
+  mutate(label_tau = paste0("tau == '", tau_label,  p_symbol, "'")) %>%
+  
+  mutate(y_slope = 0.2,
+         y_tau = -0.2)
+
+df_comb_prf_res
+```
+
+```{r}
+convert_strip <- function(x){
+  if (x == "SUM"){
+    return("**n**")
+  }
+  
+  else if (x == "ADJ"){
+    return("**n/10<sup>5</sup> people**")
+  }
+  
+  else {
+    return(x)
+  }
+}
+
+ convert_strip <- Vectorize(convert_strip)
+```
+
+```{r}
+prf_filter_rev <- df_surg_prf %>% filter(PRF %in% prf_filter[1:7]) %>%
+  distinct(PRF) %>%  arrange(desc(PRF)) %>% pull(PRF) %>%
+  as.character()
+
+prf_filter_rev                                             
+```
+
+
+```{r}
+p1_d <- df_comb_prf_res %>%
+  filter(PRF %in% c("Overall", prf_filter[1:7])) %>%
+  mutate(PRF = factor(PRF, levels = c("Overall", prf_filter_rev))) %>%
+  mutate(Y = if_else(PRF == "Overall", "a", "b")) %>%
+  ggplot(aes(TX, PRF, fill = tau))+
+  geom_tile(linewidth = 0.3, colour = "black") +
+  scale_fill_gradient2(low = "#74add1",
+                      mid  = "white",
+                      high = "#f46d43",
+                      limits = c(-1, 1),
+                      name = expression(tau))+
+  
+  geom_text(aes(label = label_slope,
+                nudge_y = y_slope),
+            size = 2.8, colour = "black",
+            parse = TRUE)+
+  
+  geom_text(aes(label = label_tau,
+                nudge_y = y_tau),
+            size = 2.8, colour = "black",
+            parse = TRUE)+
+  
+  facet_grid2(rows = vars(Y),
+              cols = vars(CAT),
+              switch = "y",
+              scales= "free_y",
+              space = "free_y",
+              labeller = labeller(CAT = convert_strip))+
+   theme_classic()+
+    guides(fill = guide_colourbar(ticks.colour = "black",
+                                ticks.linewidth = 0.2,
+                                frame.colour = "black",
+                                frame.linewidth = 0.2)) +
+  labs(tag = "C",
+       x = "Location")+
+    theme_classic()+
+    theme(plot.tag = element_text(size = 12, colour = "black", face = "bold"),
+          strip.background = element_blank(),
+          strip.text.x = element_markdown(size = 8, colour = "black", face = "bold",
+                                          margin = margin(0, 0, 0, 0, "mm")),
+          strip.text.y.left = element_blank(),
+          axis.title.x =  element_blank(),
+          axis.title.y = element_blank(),
+          axis.text.x = element_markdown(size = 8, colour = "black"),
+          axis.text.y = element_markdown(size = 8, colour = "black"),
+          axis.line = element_blank(),
+          axis.ticks = element_blank(),
+          legend.title = element_text(size = 8, colour = "black", face = "bold"),
+          legend.text = element_text(size = 8, colour = "black"),
+          legend.key.height = unit(1, "lines"),
+          legend.key.width = unit(0.75, "lines"),
+          plot.margin = margin(0, 0, 0, 0, "mm"),
+          legend.margin = margin(0, 0, 0, 0, "mm"))
+
+p1_d 
+```
+
+
+
+
+
+```{r}
+p1 <- p1_a1 + p1_a2 + p1_a3 +
+  p1_b1 + p1_b2 + p1_b3 +
+  p1_leg +
+  patchwork::free(p1_c) +
+  patchwork::free(p1_d) +
+  plot_layout(design = "
+              AAAAABBBBBCCCCCGG
+              AAAAABBBBBCCCCCGG
+              AAAAABBBBBCCCCCGG
+              DDDDDEEEEEFFFFFGG
+              DDDDDEEEEEFFFFFGG
+              DDDDDEEEEEFFFFFGG
+              HHHHHHHHHHHHHHHHH
+              HHHHHHHHHHHHHHHHH
+              HHHHHHHHHHHHHHHHH
+              HHHHHHHHHHHHHHHHH
+              HHHHHHHHHHHHHHHHH
+              HHHHHHHHHHHHHHHHH
+              IIIIIIIIIIIIIIIII
+              IIIIIIIIIIIIIIIII
+              IIIIIIIIIIIIIIIII
+              IIIIIIIIIIIIIIIII
+              IIIIIIIIIIIIIIIII
+              IIIIIIIIIIIIIIIII
+              ")
+
+p1
+
+ ggsave("../figure/Fig5.pdf", p1,
+       width = 175, height = 235, units = "mm",
+       device = cairo_pdf)
+```
