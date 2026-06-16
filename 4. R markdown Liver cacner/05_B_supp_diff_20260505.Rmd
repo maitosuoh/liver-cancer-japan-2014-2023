@@ -1,0 +1,584 @@
+---
+title: "Liver cancer"
+output: html_document
+date: "2026-02-02"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+
+library(readxl)
+library(openxlsx)
+
+library(fpp3)
+
+library(scales)
+library(glue)
+library(ggtext)
+
+library(cowplot)
+
+library(patchwork)
+
+```
+
+
+```{r}
+# make df folder
+
+#dir.create("../df/long", showWarnings = TRUE, recursive = FALSE, #mode = "0777")
+```
+
+```{r}
+df_surg_dem <- readRDS("../df/dem/df_surg_dem_reg")
+```
+
+```{r}
+df_surg_prf <- readRDS("../df/prf/df_surg_prf_reg")
+```
+
+```{r}
+df_inj_dem <- readRDS("../df/dem/df_inj_dem_reg")
+```
+
+
+```{r}
+df_surg_dem %>% count(YEAR_str)
+```
+
+```{r}
+df_surg_dem %>% filter(is.na(TOTAL)) %>% nrow()
+```
+
+
+```{r}
+df_surg_dem %>% count(SHEET, YEAR_str)
+```
+
+```{r}
+df_surg_dem <- df_surg_dem %>%
+  rename(YEAR = "YEAR_str") %>%
+  mutate(TOTAL = replace_na(TOTAL, 0))
+  
+```
+
+```{r}
+df_surg_prf <- df_surg_prf %>%
+  rename(YEAR = "YEAR_str") %>%
+  mutate(TOTAL = replace_na(TOTAL, 0))
+```
+
+
+# hepatectomy
+
+```{r}
+ df_surg_dem %>% filter(str_detect(ORGAN, "腹部") & 
+                    str_detect(PRO_name, "肝切除術")) %>%
+  count(CLASS_code)
+```
+
+
+```{r}
+df_hptc_dem <- df_surg_dem %>% 
+  filter(str_detect(CLASS_code, "^K695")) %>%
+    mutate(TX = case_when(str_detect(PRO_name, "腹腔鏡") & str_detect(PRO_name, "手術用支援機器") ~  "Robotic",
+                        str_detect(PRO_name, "腹腔鏡") & !str_detect(PRO_name, "手術用支援機器") ~ "Laparoscopic",
+                        .default = "Open"
+                        )) %>%
+ 
+  mutate(LOC = case_when(str_detect(PRO_name, "（部分切除）") ~ "Partial",
+                           str_detect(PRO_name, "（亜区域切除）") ~ "Subsegment",
+                           str_detect(PRO_name, "（外側区域切除）") ~ "Lateral segment",
+                           str_detect(PRO_name, "（１区域切除（外側区域切除を除く") ~ "One segment (excluding lateral segment)",        
+                           str_detect(PRO_name, "（２区域切除）") ~ "Two segments",
+                           str_detect(PRO_name, "（３区域切除以上") ~ "≥ Three segments",
+                           str_detect(PRO_name, "（２区域切除以上") & str_detect(PRO_name, "血行再建") ~ "≥ Two segments with vascular reconstruction")) %>%
+  
+  mutate(RES = case_when(str_detect(PRO_name, "単回") ~ "(single resection)",
+                           str_detect(PRO_name, "複数回") ~ "(multiple resections)",
+                         .default = "")) %>%
+  
+  mutate(AGE = case_when(str_detect(PRO_name, "１歳未満") ~ "(< 1 y/o)",
+                           str_detect(PRO_name, "１歳以上") ~ "(≥ 1 y/o)",
+                         .default = ""))
+```
+
+```{r}
+df_hptc_dem %>%
+  count(PRO_name, LOC)
+```
+
+
+```{r}
+df_hptc_prf <- df_surg_prf %>% 
+    filter(str_detect(CLASS_code, "^K695")) %>%
+    mutate(TX = case_when(str_detect(PRO_name, "腹腔鏡") & str_detect(PRO_name, "手術用支援機器") ~  "Robotic",
+                        str_detect(PRO_name, "腹腔鏡") & !str_detect(PRO_name, "手術用支援機器") ~ "Laparoscopic",
+                        .default = "Open"
+                        )) %>%
+ 
+  mutate(LOC = case_when(str_detect(PRO_name, "（部分切除）") ~ "Partial",
+                           str_detect(PRO_name, "（亜区域切除）") ~ "Subsegment",
+                           str_detect(PRO_name, "（外側区域切除）") ~ "Lateral segment",
+                           str_detect(PRO_name, "（１区域切除（外側区域切除を除く") ~ "One segment (excluding lateral segment)",        
+                           str_detect(PRO_name, "（２区域切除）") ~ "Two segments",
+                           str_detect(PRO_name, "（３区域切除以上") ~ "≥ Three segments",
+                           str_detect(PRO_name, "（２区域切除以上") & str_detect(PRO_name, "血行再建") ~ "≥ Two segments with vascular reconstruction")) %>%
+  
+  mutate(RES = case_when(str_detect(PRO_name, "単回") ~ "(single resection)",
+                           str_detect(PRO_name, "複数回") ~ "(multiple resections)",
+                         .default = "")) %>%
+  
+  mutate(AGE = case_when(str_detect(PRO_name, "１歳未満") ~ "(< 1 y/o)",
+                           str_detect(PRO_name, "１歳以上") ~ "(≥ 1 y/o)",
+                         .default = ""))
+```
+
+
+```{r}
+# in total
+
+df_hptc_dem_value <- df_hptc_dem %>%
+  group_by(YEAR) %>%
+  summarise(VALUE = sum(VALUE)) %>%
+  ungroup()
+
+df_hptc_dem_value
+```
+
+```{r}
+# prf value
+# 150363010	肝切除術（２区域切除）（１歳以上）all zero in hospital
+
+
+
+df_hptc_prf_value <- df_hptc_prf %>%
+  group_by(YEAR) %>%
+  summarise(VALUE = sum(VALUE)) %>%
+  ungroup()
+
+df_hptc_prf_value
+```
+
+
+```{r}
+# dem total
+
+df_hptc_dem_total <- df_hptc_dem %>%
+  distinct(YEAR, SHEET, PRO_name, .keep_all = TRUE) %>%
+  group_by(YEAR) %>%
+  summarise(TOTAL = sum(TOTAL)) %>%
+  ungroup()
+
+df_hptc_dem_total
+```
+
+```{r}
+df_hptc_dif <- df_hptc_dem_total %>%
+  left_join(df_hptc_dem_value,
+            by = join_by(YEAR)) %>%
+  mutate(DIF = (VALUE - TOTAL)/TOTAL * 100) %>%
+  rename(DIF_dem = "DIF")
+```
+
+```{r}
+df_hptc_dif <- df_hptc_dif %>%
+  left_join(df_hptc_prf_value,
+            by = join_by(YEAR),
+            suffix = c("_dem", "_prf")) %>%
+  mutate(DIF_prf = (VALUE_prf - TOTAL)/TOTAL * 100)
+  
+df_hptc_dif 
+```
+
+
+
+```{r}
+# df_hptc_dif %>% 
+#  rename(Year = "YEAR") %>%
+#   mutate(across(c(TOTAL, VALUE_dem, VALUE_prf), ~scales::comma(.x))) %>%
+#   mutate(across(starts_with("DIF"), ~ formatC(.x, digits = 2, format = "f"))) %>%
+#  write.xlsx("../table/TableS7.xlsx")
+```
+
+
+```{r}
+# in total
+
+df_hptc_dem_total_2 <- df_hptc_dem %>%
+  distinct(YEAR, CLASS_code, PRO_code, .keep_all = TRUE) %>%
+  group_by(YEAR, CLASS_code, PRO_code, TX, LOC, AGE) %>%
+  summarise(TOTAL = sum(TOTAL)) %>%
+  ungroup() %>%
+  mutate(ID = paste0(YEAR, "_", PRO_code))
+
+df_hptc_dem_total_2
+```
+
+```{r}
+df_hptc_dem_value_2 <- df_hptc_dem %>%
+  group_by(YEAR, PRO_code, TX, LOC, AGE) %>%
+  summarise(VALUE = sum(VALUE)) %>%
+  ungroup() %>%
+  mutate(ID = paste0(YEAR, "_", PRO_code))
+
+df_hptc_dem_value_2
+```
+
+
+
+```{r}
+df_hptc_dem_total_2 %>%
+  left_join(df_hptc_dem_value_2 %>% select(ID, VALUE),
+            by = join_by(ID)) %>%
+  mutate(DIF = (VALUE - TOTAL)/100) 
+```
+
+```{r}
+# in total
+
+df_hptc_prf_total_2 <- df_hptc_prf %>%
+  distinct(YEAR,CLASS_code, PRO_code, .keep_all = TRUE) %>%
+  group_by(YEAR,CLASS_code, PRO_code, TX, LOC, AGE) %>%
+  summarise(TOTAL = sum(TOTAL)) %>%
+  ungroup() %>%
+  mutate(ID = paste0(YEAR, "_", PRO_code))
+
+df_hptc_prf_total_2
+```
+
+```{r}
+df_hptc_prf_value_2 <- df_hptc_prf %>%
+  group_by(YEAR,CLASS_code,  PRO_code, TX, LOC, AGE) %>%
+  summarise(VALUE = sum(VALUE)) %>%
+  ungroup() %>%
+  mutate(ID = paste0(YEAR, "_", PRO_code))
+
+df_hptc_prf_value_2
+```
+
+
+```{r}
+df_hptc_dif_2 <- df_hptc_dem_total_2 %>%
+  left_join(df_hptc_dem_value_2 %>% select(ID, VALUE),
+            by = join_by(ID)) %>%
+  mutate(DIF = (VALUE - TOTAL)/TOTAL * 100) %>%
+  rename(DIF_dem = "DIF")
+
+df_hptc_dif_2
+```
+
+```{r}
+df_hptc_dif_2 <- df_hptc_dif_2 %>%
+  left_join(df_hptc_prf_value_2 %>% select(ID, VALUE),
+            by = join_by(ID),
+            suffix = c("_dem", "_prf")) %>%
+  mutate(DIF_prf = (VALUE_prf - TOTAL)/ TOTAL * 100) %>%
+  select(!ID)
+  
+df_hptc_dif_2
+```
+
+
+```{r}
+df_hptc_dif_2015 <- df_hptc_dif_2 %>%
+  filter(YEAR == "2015") %>%
+  arrange(PRO_code) #%>%
+#  mutate(TX = case_when(TX == "Lap" ~  "Laparoscopic",
+#                        TX == "Open" ~ "Open")) 
+#  mutate(LOC  = case_when(LOC =="One_seg" ~ "One segment",
+#                          LOC == "Sub_seg" ~ "Subsegment",
+#                          LOC == "Two_seg_" ~ "≥ Two segments",
+#                          .default = LOC))
+
+df_hptc_dif_2015
+```
+
+
+```{r}
+df_hptc_dif_2015 %>% 
+  mutate(TX = str_replace(TX, "Laparoscopic", "Lap")) %>%
+  mutate(TX = paste0("(", TX, ")")) %>%
+  select(CLASS_code, PRO_code, 
+         LOC, TX, AGE, 
+         TOTAL,
+         starts_with("VALUE"), starts_with("DIF")) %>%
+  rename(Approach = "TX",
+         Procedure = "LOC") %>%
+  select(! c(ends_with("_dem"))) %>%
+  mutate(across(starts_with("DIF"), ~ formatC(.x, digits = 2, format = "fg", flag = "#"))) %>%
+  mutate(across(starts_with("DIF"), ~ str_remove(.x, "\\.$"))) %>%
+  
+  mutate(across(c(TOTAL, starts_with("VALUE")), ~ scales::comma(.x))) %>%
+  mutate(across(starts_with("DIF"), ~ str_replace(.x, "-", "−"))) %>%  
+  mutate(DIF_prf = case_when(DIF_prf == NaN ~  "-",
+                            # DIF_prf == "0.00" ~ "0",
+                             DIF_prf == "−100.00" ~ "−100",
+                             .default = DIF_prf)) %>%
+  write.xlsx("../table/TableS9.xlsx")
+```
+
+
+
+# RFA 
+```{r}
+df_abl_dem <- df_surg_dem %>% 
+    filter( (str_detect(PRO_name, "肝悪性腫瘍ラジオ波焼灼療法") |
+             str_detect(PRO_name, "肝悪性腫瘍マイクロ波凝固法"))) %>%
+      mutate(TX = case_when(str_detect(PRO_name, "ラジオ") & str_detect(PRO_name, "腹腔鏡") ~ "RFA (Lap)",
+                            str_detect(PRO_name, "ラジオ") & !str_detect(PRO_name, "腹腔鏡") ~ "RFA",
+                            str_detect(PRO_name, "マイクロ") & str_detect(PRO_name, "腹腔鏡") ~ "MWA (Lap)",
+                            str_detect(PRO_name, "マイクロ") & !str_detect(PRO_name, "腹腔鏡") ~ "MWA")) 
+```
+
+```{r}
+df_abl_prf <- df_surg_prf %>% 
+    filter( (str_detect(PRO_name, "肝悪性腫瘍ラジオ波焼灼療法") |
+             str_detect(PRO_name, "肝悪性腫瘍マイクロ波凝固法"))) %>%
+      mutate(TX = case_when(str_detect(PRO_name, "ラジオ") & str_detect(PRO_name, "腹腔鏡") ~ "RFA (Lap)",
+                            str_detect(PRO_name, "ラジオ") & !str_detect(PRO_name, "腹腔鏡") ~ "RFA",
+                            str_detect(PRO_name, "マイクロ") & str_detect(PRO_name, "腹腔鏡") ~ "MWA (Lap)",
+                            str_detect(PRO_name, "マイクロ") & !str_detect(PRO_name, "腹腔鏡") ~ "MWA")) 
+```
+
+```{r}
+#df_rfa_dem <- df_rfa_dem %>%
+#  mutate(TX = case_when(str_detect(TX, "RFA") ~ "RFA",
+#                        str_detect(TX, "MWA") ~ "MWA",
+#                        .default= TX))
+```
+
+
+```{r}
+# in total
+
+df_abl_dem_value <- df_abl_dem %>%
+  group_by(YEAR) %>%
+  summarise(VALUE = sum(VALUE)) %>%
+  ungroup()
+
+df_abl_dem_value 
+```
+
+```{r}
+# in total
+
+df_abl_dem_total <- df_abl_dem %>%
+  distinct(YEAR, SHEET, PRO_name, .keep_all = TRUE) %>%
+  group_by(YEAR) %>%
+  summarise(TOTAL = sum(TOTAL)) %>%
+  ungroup()
+
+df_abl_dem_total
+```
+
+```{r}
+# in total
+
+df_abl_prf_value <- df_abl_prf %>%
+  group_by(YEAR) %>%
+  summarise(VALUE = sum(VALUE)) %>%
+  ungroup()
+
+df_abl_prf_value 
+```
+
+```{r}
+df_abl_dem_total %>%
+  left_join(df_abl_dem_value,
+            by = join_by(YEAR)) %>%
+  mutate(DIF = (VALUE - TOTAL)/100)
+```
+
+```{r}
+df_abl_dif <- df_abl_dem_total %>%
+  left_join(df_abl_dem_value,
+            by = join_by(YEAR)) %>%
+  mutate(DIF = (VALUE - TOTAL)/100) %>%
+  rename(DIF_dem = "DIF")
+
+df_abl_dif
+```
+
+```{r}
+df_abl_dif <- df_abl_dif %>%
+  left_join(df_abl_prf_value,
+            by = join_by(YEAR),
+            suffix = c("_dem", "_prf")) %>%
+  mutate(DIF_prf = (VALUE_prf - TOTAL)/TOTAL * 100)
+  
+df_abl_dif
+```
+
+```{r}
+#df_abl_dif %>%
+#  rename(Year = "YEAR") %>%
+#  mutate(across(c(TOTAL, VALUE_dem, VALUE_prf), ~scales::comma(.x))) %>%
+#  mutate(across(starts_with("DIF"), ~ formatC(.x, digits = 2, format = "f") %>% #str_remove_all("\\s"))) %>%
+#  write.xlsx("../table/TableS9.xlsx")
+```
+
+
+```{r}
+# in total
+
+df_abl_dem_total_2 <- df_abl_dem %>%
+  distinct(YEAR, SHEET, PRO_code, .keep_all = TRUE) %>%
+  group_by(YEAR, PRO_code) %>%
+  summarise(TOTAL = sum(TOTAL)) %>%
+  ungroup() %>%
+  mutate(ID = paste0(YEAR, "_", PRO_code))
+
+df_abl_dem_total_2
+```
+
+```{r}
+df_abl_dem_value_2 <- df_abl_dem %>%
+  group_by(YEAR, PRO_code) %>%
+  summarise(VALUE = sum(VALUE)) %>%
+  ungroup() %>%
+  mutate(ID = paste0(YEAR, "_", PRO_code))
+
+df_abl_dem_value_2
+```
+
+
+
+```{r}
+df_abl_dem_total_2 %>%
+  left_join(df_abl_dem_value_2 %>% select(ID, VALUE),
+            by = join_by(ID)) %>%
+  mutate(DIF = (VALUE - TOTAL)/TOTAL * 100) 
+```
+
+
+```{r}
+df_abl_dem_total_2 %>%
+  left_join(df_abl_dem_value_2 %>% select(ID, VALUE),
+            by = join_by(ID)) %>%
+  mutate(DIF = (VALUE - TOTAL)/100) %>%
+  ggplot(aes(YEAR, DIF))+
+  geom_boxplot(width = 0.5)+
+  scale_y_continuous(limits = c(-0.8, 0),
+                     breaks = seq(-0.8, 0, 0.2))+
+  theme_classic()
+```
+
+```{r}
+df_abl_dem_total_2 %>%
+  left_join(df_abl_dem_value_2 %>% select(ID, VALUE),
+            by = join_by(ID)) %>%
+  mutate(DIF = (VALUE - TOTAL)/TOTAL * 100) %>%
+  filter(YEAR == "2023") %>%
+  View()
+```
+
+
+# TACE
+
+
+```{r}
+df_tace_dem <- df_surg_dem %>% 
+    filter((str_detect(PRO_name, "化学塞栓") ))
+```
+
+```{r}
+df_tace_prf <- df_surg_prf %>% 
+    filter((str_detect(PRO_name, "化学塞栓") ))
+```
+
+```{r}
+# in total
+
+df_tace_dem_value <- df_tace_dem %>%
+  group_by(YEAR) %>%
+  summarise(VALUE = sum(VALUE)) %>%
+  ungroup()
+
+df_tace_dem_value 
+```
+
+```{r}
+# in total
+
+df_tace_dem_total <- df_tace_dem %>%
+  distinct(YEAR, SHEET, PRO_name, .keep_all = TRUE) %>%
+  group_by(YEAR) %>%
+  summarise(TOTAL = sum(TOTAL)) %>%
+  ungroup()
+
+df_tace_dem_total
+```
+
+```{r}
+df_tace_dem_total %>%
+  left_join(df_tace_dem_value,
+            by = join_by(YEAR)) %>%
+  mutate(DIF = (VALUE - TOTAL)/100)
+```
+
+```{r}
+# in total
+
+df_tace_prf_value <- df_tace_prf %>%
+  group_by(YEAR) %>%
+  summarise(VALUE = sum(VALUE)) %>%
+  ungroup()
+
+df_tace_prf_value 
+```
+
+```{r}
+df_tace_dif <- df_tace_dem_total %>%
+  left_join(df_tace_dem_value,
+            by = join_by(YEAR)) %>%
+  mutate(DIF = (VALUE - TOTAL)/TOTAL * 100) %>%
+  rename(DIF_dem = "DIF")
+
+df_tace_dif
+```
+
+```{r}
+df_tace_dif <- df_tace_dif %>%
+  left_join(df_tace_prf_value,
+            by = join_by(YEAR),
+            suffix = c("_dem", "_prf")) %>%
+  mutate(DIF_prf = (VALUE_prf - TOTAL)/TOTAL * 100)
+  
+df_tace_dif
+```
+
+```{r}
+##df_tace_dif %>%
+#  rename(Year = "YEAR") %>%
+#  mutate(across(c(TOTAL, VALUE_dem, VALUE_prf), ~scales::comma(.x))) %>%
+#  mutate(across(starts_with("DIF"), ~ formatC(.x, digits = 2, format = "f"))) %>%
+#  write.xlsx("../table/TableS10.xlsx")
+```
+
+```{r}
+df_tx_dif <- df_hptc_dif %>%
+  mutate(TX = "Resection") %>%
+  bind_rows(df_abl_dif %>%
+              mutate(TX = "Ablation")) %>%
+  bind_rows(df_tace_dif %>%
+              mutate(TX = "TACE")) %>%
+  relocate(TX, .before = YEAR)
+
+df_tx_dif 
+```
+
+```{r}
+
+df_tx_dif %>%
+  rename(Year = "YEAR") %>%
+  mutate(across(c(TOTAL, VALUE_dem, VALUE_prf), ~scales::comma(.x))) %>%
+  mutate(across(starts_with("DIF"), ~ formatC(.x, digits = 2, format = "fg", flag = "#"))) %>%
+  mutate(across(starts_with("DIF"), ~ str_replace_all(.x, "-", "−"))) %>%
+  write.xlsx("../table/TableS5.xlsx")
+```
+

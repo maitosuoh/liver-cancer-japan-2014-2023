@@ -1,0 +1,309 @@
+---
+title: "Liver cancer"
+output: html_document
+date: "2026-02-02"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+
+library(readxl)
+library(openxlsx)
+
+library(fpp3)
+
+library(scales)
+library(glue)
+library(ggtext)
+
+library(cowplot)
+
+library(patchwork)
+library(stringi)
+```
+
+
+```{r}
+# make df folder
+
+dir.create("../table", showWarnings = TRUE, recursive = FALSE, mode = "0777")
+```
+
+```{r}
+df_surg_dem <- readRDS("../df/dem/df_surg_dem_reg")
+```
+
+```{r}
+df_surg_prf <- readRDS("../df/prf/df_surg_prf_reg")
+```
+
+```{r}
+df_inj_dem <- readRDS("../df/dem/df_inj_dem_reg")
+```
+
+
+```{r}
+df_test_mon_reg <-  readRDS("../df/mon/df_mon_test_reg")
+
+df_test_mon_add <-  readRDS("../df/mon/df_mon_test_add")
+```
+
+
+```{r}
+df_surg_dem %>% count(YEAR_str)
+```
+
+```{r}
+df_surg_dem %>% filter(is.na(TOTAL)) %>% nrow()
+```
+
+
+```{r}
+df_surg_dem %>% count(SHEET, YEAR_str)
+```
+
+```{r}
+df_surg_dem <- df_surg_dem %>%
+  rename(YEAR = "YEAR_str") %>%
+  mutate(TOTAL = replace_na(TOTAL, 0))
+  
+```
+
+```{r}
+df_inj_dem <- df_inj_dem %>%
+  rename(YEAR = "YEAR_str") %>%
+  mutate(TOTAL = replace_na(TOTAL, 0))
+```
+
+# hepatectomy
+
+```{r}
+ df_surg_dem %>% filter(str_detect(ORGAN, "腹部") & 
+                    str_detect(PRO_name, "肝切除術")) %>%
+  count(PRO_name)
+```
+
+
+```{r}
+ df_hptc_code <- df_surg_dem %>% 
+  filter(str_detect(CLASS_code, "^K695") ) %>%
+  distinct(CLASS_code, PRO_code, .keep_all = TRUE) %>%
+  arrange(CLASS_code, PRO_code) %>%
+  
+  mutate(TX = case_when(str_detect(PRO_name, "腹腔鏡") & str_detect(PRO_name, "手術用支援機器") ~  "Robotic",
+                        str_detect(PRO_name, "腹腔鏡") & !str_detect(PRO_name, "手術用支援機器") ~ "Laparoscopic",
+                        .default = "Open"
+                        )) %>%
+ 
+  mutate(PRO = case_when(str_detect(PRO_name, "（部分切除）") ~ "Partial",
+                           str_detect(PRO_name, "（亜区域切除）") ~ "Subsegment",
+                           str_detect(PRO_name, "（外側区域切除）") ~ "Lateral segment",
+                           str_detect(PRO_name, "（１区域切除（外側区域切除を除く") ~ "One segment (excluding lateral segment)",        
+                           str_detect(PRO_name, "（２区域切除）") ~ "Two segments",
+                           str_detect(PRO_name, "（３区域切除以上") ~ "≥ Three segments",
+                           str_detect(PRO_name, "（２区域切除以上で血行再建）") ~ "≥ Two segments with vascular reconstruction")) %>%
+  
+  mutate(RES = case_when(str_detect(PRO_name, "単回") ~ "(single resection)",
+                           str_detect(PRO_name, "複数回") ~ "(multiple resections)",
+                         .default = "")) %>%
+  
+  mutate(AGE = case_when(str_detect(PRO_name, "１歳未満") ~ "(< 1 y/o)",
+                           str_detect(PRO_name, "１歳以上") ~ "(≥ 1 y/o)",
+                         .default = "")) %>%
+  
+  mutate(PRO = paste0(PRO, " ", RES)) %>%
+  
+  select(CLASS_code, PRO_code, TX, PRO, AGE)
+
+
+ df_hptc_code
+```
+
+```{r}
+ df_hptc_code %>%
+  
+  rename_with(.cols = everything(),
+              .fn = str_to_sentence) %>%
+  
+  rename(Approach = "Tx",
+         Procedure = "Pro") %>%
+  
+  write.xlsx("../table/TableS1.xlsx")
+  
+```
+
+
+```{r}
+df_abl_code <- df_surg_dem %>% 
+  filter((str_detect(PRO_name, "肝悪性腫瘍ラジオ波焼灼療法") |
+             str_detect(PRO_name, "肝悪性腫瘍マイクロ波凝固法"))) %>%
+  
+  distinct(CLASS_code, PRO_code, .keep_all = TRUE) %>%
+  
+  arrange(CLASS_code, PRO_code) %>%
+  
+  mutate(PRO_1 = case_when(str_detect(PRO_name, "マイクロ波") ~ "Microwave ablation",
+                           str_detect(PRO_name, "ラジオ波") ~ "Radiofrequency ablation"
+                                      )) %>%
+  
+  mutate(PRO_2 = case_when(str_detect(PRO_name, "２ｃｍを超える") ~ "(> 2 cm)",
+                           str_detect(PRO_name, "２ｃｍ以内") ~ "(≤ 2 cm)",
+                           .default = "")) %>%
+  
+  mutate(PRO_3 = case_when(str_detect(PRO_name, "その他") ~ "(other)",
+                           str_detect(PRO_name, "腹腔鏡") ~ "(laparoscopy)"
+                                      )) %>%
+
+  select(CLASS_code, PRO_code, PRO_1, PRO_2, PRO_3)
+
+df_abl_code
+```
+
+```{r}
+df_tace_code <- df_surg_dem %>% 
+  filter((str_detect(PRO_name, "化学塞栓") )) %>%
+  distinct(CLASS_code, PRO_code, .keep_all = TRUE) %>%
+  mutate(PRO_1 = "Selective arterial chemoembolization") %>%
+  select(CLASS_code, PRO_code, PRO_1)
+
+df_tace_code
+```
+
+
+```{r}
+df_abl_code %>%
+  bind_rows(df_tace_code) %>%
+  
+  rename_with(.cols = everything(),
+              .fn = str_to_sentence) %>%
+  
+  rename(Procedure = "Pro_1") %>%
+  
+  write.xlsx("../table/TableS2.xlsx")
+```
+
+
+```{r}
+df_test_mon_reg %>%
+  filter(PRO_code == "160072210" | (str_detect(PRO_name, "肝硬度|エラストグラフィ"))) %>%
+  distinct(CLASS_code, PRO_code, .keep_all = TRUE) %>%
+  View()
+```
+
+
+```{r}
+df_test_mon_reg %>%
+  filter(PRO_code == "160072210" | (str_detect(PRO_name, "肝硬度|エラストグラフィ"))) %>%
+  distinct(CLASS_code, PRO_code, .keep_all = TRUE) 
+
+```
+
+```{r}
+df_test_mon_reg %>%
+  mutate(PRO_name = stri_trans_general(PRO_name, "Fullwidth-Halfwidth")) %>%
+  filter(str_detect(PRO_name, "HB|HC|B型肝炎|C型肝炎|AFP|PIVKA"))　%>%
+  count(PRO_code, PRO_name)
+```
+
+```{r}
+# 160046810	HBs抗原定性･半定量
+# 160049210	HBs抗原
+# 160118510	HCV抗体定性･定量
+# 160158450	HCV核酸定量
+# 160159750	HCV核酸検出
+# 160160350	HBV核酸定量
+
+# 160015610 PIVKA-2
+# 160117110	PIVKA-2半定量
+# 160193310	PIVKA-2定量
+
+# 160036710	α-ﾌｪﾄﾌﾟﾛﾃｲﾝ(AFP)
+# 160162150	α-ﾌｪﾄﾌﾟﾛﾃｲﾝﾚｸﾁﾝ分画(AFP-L3%)
+
+# 160189750  Liver stiffness measurement",
+# 160207310" "Ultrasound elastography"
+
+code_bm <- c("160046810",
+               "160049210",
+               "160118510",
+               "160158450",
+               "160159750",
+               "160160350",
+               "160015610",
+               "160117110",
+               "160193310",
+               "160036710",
+               "160162150")
+
+```
+
+```{r}
+
+df_bm <- df_test_mon_reg %>%
+  filter(PRO_code %in% code_bm) %>%
+   mutate(PRO_name = stri_trans_general(PRO_name, "Fullwidth-Halfwidth")) %>%
+  mutate(PRO_en = case_when(PRO_name == "HBs抗原定性･半定量" ~ "HBsAg (quantitative & semi-quantitative)",
+                        PRO_name == "HBs抗原" ~ "HBsAg",
+                        PRO_name == "HCV抗体定性･定量" ~ "HBsAg (qualitative & quantitative)",
+                        
+                        
+                        PRO_name == "HCV核酸定量" ~ "HCV-RNA (quantitative)",
+                        PRO_name == "HCV核酸検出" ~ "HCV-RNA (detection)",
+                        PRO_name == "HBV核酸定量" ~ "HBV-DNA (quantitative)",
+                        
+                        PRO_name == "PIVKA-2" ~ "PIVKA-II",
+                        PRO_name == "PIVKA-2半定量" ~ "PIVKA-II (semiquantitative)",
+                        PRO_name == "PIVKA-2定量" ~ "PIVKA-II (quantitative)",
+                        
+                        PRO_code == "160036710" ~ "AFP",
+                        PRO_code == "160162150" ~ "AFP-L3"
+                        ))
+```
+
+```{r}
+df_bm <- df_bm %>%
+  mutate(CLASS_en = case_when(CLASS_code == "D006" ~ "Hemorrhage & coagulation",
+                              CLASS_code == "D009" ~ "Tumour marker",
+                              CLASS_code == "D013" ~ "Hepatitis virus",
+                              CLASS_code == "D023" ~ "Microbial nucleic acid"))
+```
+
+
+```{r}
+df_bm_uni <- df_bm %>%
+  arrange(CLASS_code, PRO_code) %>%
+  distinct(CLASS_code, CLASS_en, PRO_code, PRO_en)
+
+df_bm_uni
+```
+
+```{r}
+code_elast <- c("160189750","160207310")
+```
+
+
+```{r}
+df_elast <- df_test_mon_reg %>%
+  filter(PRO_code %in% code_elast)%>%
+  mutate(CLASS_en = case_when(CLASS_code == "D215-2" ~ "Liver stiffness measurement",
+                                CLASS_code == "D215-3" ~ "Ultrasound elastography")) %>%
+  mutate(PRO_en =case_when(PRO_code == "160189750" ~ "Transient elastography",
+                          PRO_code == "160207310" ~ "Ultrasound elastography")) %>%
+  distinct(CLASS_code, CLASS_en, PRO_code, PRO_en)
+  
+
+df_elast
+```
+
+
+```{r}
+df_bm_uni %>%
+  filter(PRO_en != "AFP-L3") %>%
+  bind_rows(df_elast) %>%
+  write.xlsx("../table/TableS3.xlsx")
+```
+
